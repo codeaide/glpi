@@ -51,7 +51,7 @@ class Reminder extends CommonDBVisible implements CalDAVCompatibleItemInterface 
 
    // From CommonDBTM
    public $dohistory                   = true;
-
+   public $can_be_translated           = true;
    // For visibility checks
    protected $users     = [];
    protected $groups    = [];
@@ -170,6 +170,7 @@ class Reminder extends CommonDBVisible implements CalDAVCompatibleItemInterface 
             Profile_Reminder::class,
             Reminder_User::class,
             VObject::class,
+            ReminderTranslation::class,
          ]
       );
    }
@@ -528,6 +529,7 @@ class Reminder extends CommonDBVisible implements CalDAVCompatibleItemInterface 
       $this->addDefaultFormTab($ong);
       $this->addStandardTab('Document_Item', $ong, $options);
       $this->addStandardTab('Reminder', $ong, $options);
+      $this->addStandardTab('ReminderTranslation', $ong, $options);
       $this->addStandardTab('Log', $ong, $options);
 
       return $ong;
@@ -779,13 +781,16 @@ class Reminder extends CommonDBVisible implements CalDAVCompatibleItemInterface 
                       "<span>";
          }
       }
-
+      $text = $val['text'];
+      if (isset($val['transtext']) && !empty($val['transtext'])) {
+         $text = $val['transtext'];
+      }
       if ($complete) {
          $html.= "<span>".Planning::getState($val["state"])."</span><br>";
-         $html.= "<div class='event-description rich_text_container'>".$val["text"].$recall."</div>";
+         $html.= "<div class='event-description rich_text_container'>".$text.$recall."</div>";
       } else {
          $html.= Html::showToolTip("<span class='b'>".Planning::getState($val["state"])."</span><br>
-                                   ".$val["text"].$recall,
+                                   ".$text.$recall,
                                    ['applyto' => "reminder_".$val["reminders_id"].$rand,
                                          'display' => false]);
       }
@@ -831,7 +836,7 @@ class Reminder extends CommonDBVisible implements CalDAVCompatibleItemInterface 
          $criteria = [
             'FROM'   => 'glpi_reminders',
             'WHERE'  => array_merge([
-               'users_id'  => $users_id,
+               'glpi_reminders.users_id'  => $users_id,
                [
                   'OR'        => [
                      'end'          => ['>=', $today],
@@ -839,7 +844,7 @@ class Reminder extends CommonDBVisible implements CalDAVCompatibleItemInterface 
                   ]
                ]
             ], $visibility_criteria),
-            'ORDER'  => 'name'
+            'ORDER'  => 'glpi_reminders.name'
          ];
 
          $titre = "<a href='".$CFG_GLPI["root_doc"]."/front/reminder.php'>".
@@ -853,7 +858,7 @@ class Reminder extends CommonDBVisible implements CalDAVCompatibleItemInterface 
 
          $criteria = array_merge_recursive(
             [
-               'SELECT'          => 'glpi_reminders.*',
+               'SELECT'          => ['glpi_reminders.*'],
                'DISTINCT'        => true,
                'FROM'            => 'glpi_reminders',
                'WHERE'           => $visibility_criteria,
@@ -873,6 +878,22 @@ class Reminder extends CommonDBVisible implements CalDAVCompatibleItemInterface 
          } else {
             $titre = _n('Public reminder', 'Public reminders', Session::getPluralNumber());
          }
+      }
+
+      if (ReminderTranslation::isReminderTranslationActive()
+          && countElementsInTable('glpi_remindertranslations') > 0) {
+         $criteria['LEFT JOIN']['glpi_remindertranslations'] = [
+            'ON'  => [
+               'glpi_reminders'             => 'id',
+               'glpi_remindertranslations'  => 'reminders_id', [
+               'AND'                            => [
+                  'glpi_remindertranslations.language' => $_SESSION['glpilanguage']
+                  ]
+               ]
+            ]
+         ];
+         $criteria['SELECT'][] = "glpi_remindertranslations.name AS transname";
+         $criteria['SELECT'][] = "glpi_remindertranslations.text AS transtext";
       }
 
       $iterator = $DB->request($criteria);
@@ -895,14 +916,24 @@ class Reminder extends CommonDBVisible implements CalDAVCompatibleItemInterface 
          $rand = mt_rand();
 
          while ($data = $iterator->next()) {
+            $self = new self();
+            $self->getFromDB($data["id"]);
             echo "<tr class='tab_bg_2'><td>";
+            $name = $data['name'];
+
+            if (isset($data['transname']) && !empty($data['transname'])) {
+               $name = $data['transname'];
+            }
             $link = "<a id='content_reminder_".$data["id"].$rand."'
                       href='".Reminder::getFormURLWithID($data["id"])."'>".
-                      $data["name"]."</a>";
-
-            $tooltip = Html::showToolTip(Toolbox::unclean_html_cross_side_scripting_deep($data["text"]),
+                    $name."</a>";
+            $text = $data["text"];
+            if (isset($data['transtext']) && !empty($data['transtext'])) {
+               $text = $data['transtext'];
+            }
+            $tooltip = Html::showToolTip(Toolbox::unclean_html_cross_side_scripting_deep($text),
                                          ['applyto' => "content_reminder_".$data["id"].$rand,
-                                               'display' => false]);
+                                          'display' => false]);
             printf(__('%1$s %2$s'), $link, $tooltip);
 
             if ($data["is_planned"]) {
